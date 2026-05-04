@@ -52,6 +52,8 @@ class MosaicTiles:
         if polygons is None:
             polygons = []
         for chain in tqdm(chains):
+            if len(chain) < 2:
+                continue
 
             # consider existing polygons next to the new lane (reason: speed)
             search_area = LineString(np.array(chain)[:, ::-1]).buffer(2.1 * self.half_tile_size)
@@ -177,7 +179,7 @@ class MosaicTiles:
             i_largest = np.argmax([p_i.area for p_i in polygon.geoms])
             polygon = polygon.geoms[i_largest]
         # remove pathologic polygons with holes (rare event):
-        if polygon.type not in ["MultiLineString", "LineString", "GeometryCollection"]:
+        if polygon.geom_type not in ["MultiLineString", "LineString", "GeometryCollection"]:
             if polygon.interiors:  # check for attribute interiors if accessible
                 polygon = Polygon(list(polygon.exterior.coords))
 
@@ -207,7 +209,7 @@ class MosaicTiles:
         # remove or correct strange polygons
         polygons_new = []
         for polygon in polygons:
-            if polygon.type == "MultiPolygon":
+            if polygon.geom_type == "MultiPolygon":
                 for polygon_repaired in polygon.geoms:
                     polygons_new += [polygon_repaired]
             else:
@@ -215,7 +217,7 @@ class MosaicTiles:
 
         polygons_new2 = []
         for polygon in polygons_new:
-            if polygon.exterior.type == "LinearRing":
+            if polygon.exterior.geom_type == "LinearRing":
                 polygons_new2 += [polygon]
 
         return polygons_new2
