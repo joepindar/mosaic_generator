@@ -56,6 +56,18 @@ class ConfigResolver:
             cfg.edges_path = cfg.get("edges_path", None)
             cfg.output_dpi = cfg.get("output_dpi", 96)
 
+            # Visual / shape post-processing knobs (see mosaic_tiles.MosaicTiles).
+            cfg.shrink_tiles = cfg.get("shrink_tiles", True)
+            cfg.shrink_buffer_factor = cfg.get("shrink_buffer_factor", 0.03)
+            cfg.shrink_join_style = cfg.get("shrink_join_style", 2)
+            cfg.convex_repair = cfg.get("convex_repair", False)
+            cfg.convex_repair_threshold = cfg.get("convex_repair_threshold", 0.92)
+            cfg.simplify_tolerance_factor = cfg.get("simplify_tolerance_factor", 0.05)
+            cfg.skip_thin_polygons = cfg.get("skip_thin_polygons", True)
+            cfg.figure_dpi = cfg.get("figure_dpi", cfg.output_dpi)
+            cfg.tile_edge_lw = cfg.get("tile_edge_lw", 0.3)
+            cfg.tile_edge_color = cfg.get("tile_edge_color", "black")
+
             cfg.mosaic_width, cfg.mosaic_height = self._resolve_mosaic_dimensions(cfg=cfg)
             cfg.tile_size = self._resolve_tile_size(cfg=cfg)
 
