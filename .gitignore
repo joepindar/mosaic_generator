@@ -49,4 +49,10 @@ dmypy.json
 *.yaml
 !data/configs/*.yaml
 
+# Local matplotlib cache used by smoke_test.py
+.mplconfig/
+
+# Hydra single/multi run outputs
+outputs/
+
 .DS_Store
