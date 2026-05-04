@@ -54,6 +54,7 @@ class ConfigResolver:
             cfg.save_intermediate_steps = cfg.get("save_intermediate_steps", False)
 
             cfg.edges_path = cfg.get("edges_path", None)
+            cfg.output_dpi = cfg.get("output_dpi", 96)
 
             cfg.mosaic_width, cfg.mosaic_height = self._resolve_mosaic_dimensions(cfg=cfg)
             cfg.tile_size = self._resolve_tile_size(cfg=cfg)
@@ -61,6 +62,25 @@ class ConfigResolver:
         return cfg
 
     def _resolve_mosaic_dimensions(self, cfg: DictConfig) -> DictConfig:
+
+        if cfg.get("match_output_to_input_pixels", False):
+            logger.info("Sizing output figure to match input image pixel size (see output_dpi)...")
+            image_handler = ImageHandler(cfg)
+            image = image_handler.read_image()
+            img_height, img_width, _ = image.shape
+            dpi = cfg.get("output_dpi", 96)
+            # figsize is in inches; savefig uses output_dpi -> pixels = inches * dpi = image pixels
+            mosaic_width = img_width * 2.54 / dpi
+            mosaic_height = img_height * 2.54 / dpi
+            logger.info(
+                "Resolved mosaic figure to ~%d x %d px at %d dpi (%.2f x %.2f cm)",
+                img_width,
+                img_height,
+                dpi,
+                mosaic_width,
+                mosaic_height,
+            )
+            return mosaic_width, mosaic_height
 
         mosaic_width = cfg.get("mosaic_width", False)
         mosaic_height = cfg.get("mosaic_height", False)
@@ -89,6 +109,9 @@ class ConfigResolver:
 
         if not tile_size:
             logger.info("Desired tile size not provided, estimating default size based on image size...")
-            tile_size = np.min((cfg.mosaic_width, cfg.mosaic_height))
+            if cfg.get("match_output_to_input_pixels", False):
+                tile_size = 10
+            else:
+                tile_size = np.min((cfg.mosaic_width, cfg.mosaic_height))
 
         return tile_size
