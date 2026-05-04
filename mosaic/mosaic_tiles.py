@@ -31,6 +31,21 @@ class MosaicTiles:
         self.mosaic_height = 0
         self.mosaic_width = 0
 
+        cfg_get = config_parameters.get
+        self.shrink_tiles: bool = cfg_get("shrink_tiles", True)
+        self.shrink_buffer_factor: float = cfg_get("shrink_buffer_factor", 0.03)
+        # Shapely join style for negative buffer: 1=round, 2=mitre, 3=bevel.
+        # Round (1) erodes corners into circular arcs and is the main reason
+        # tiles appear "blobby" at small sizes.
+        self.shrink_join_style: int = cfg_get("shrink_join_style", 2)
+        self.convex_repair: bool = cfg_get("convex_repair", False)
+        self.convex_repair_threshold: float = cfg_get("convex_repair_threshold", 0.92)
+        self.simplify_tolerance_factor: float = cfg_get("simplify_tolerance_factor", 0.05)
+        self.skip_thin_polygons: bool = cfg_get("skip_thin_polygons", True)
+        self.figure_dpi: int = cfg_get("figure_dpi", cfg_get("output_dpi", 96))
+        self.tile_edge_lw: float = cfg_get("tile_edge_lw", 0.3)
+        self.tile_edge_color = cfg_get("tile_edge_color", "black")
+
     def place_tiles_along_guides(self, chains: List, angles: np.array, polygons: List = None) -> List:
         """Creates polygons (tiles) along guides
 
@@ -100,6 +115,15 @@ class MosaicTiles:
 
             if chain_ready:
                 line = self._get_line_from_coords(x_coord, y_coord, angle)
+
+                # Mirror upstream behaviour: a section thinner than ~3 points along the
+                # guide produces near-degenerate polygons that round into specks during
+                # post-processing. Advance the start anchor without emitting a tile.
+                if self.skip_thin_polygons and (point_idx - point_idx_start) <= 2:
+                    line_start = line
+                    point_angle_start = angle
+                    point_idx_start = point_idx
+                    continue
 
                 polygons, preselected_nearby_polygons = self._add_polygon(
                     line_start, line, polygons, preselected_nearby_polygons
@@ -189,21 +213,52 @@ class MosaicTiles:
 
         logger.info("Posptrocessing mosaic")
         # complete_polygons = self.cut_tiles_outside_frame(polygons)
-        shrinked_polygons = self._irregular_shrink(polygons)
-        repaired_polygons = self._repair_tiles(shrinked_polygons)
-        reduced_polygons = self._reduce_edge_count(repaired_polygons)
-        polygons = self._drop_small_tiles(reduced_polygons)
+        if self.shrink_tiles:
+            polygons = self._irregular_shrink(polygons)
+        polygons = self._repair_tiles(polygons)
+        if self.convex_repair:
+            polygons = self._convexify_tiles(polygons)
+        polygons = self._reduce_edge_count(polygons)
+        polygons = self._drop_small_tiles(polygons)
 
         return polygons
 
     def _irregular_shrink(self, polygons):
         polygons_shrinked = []
+        buffer_distance = -self.shrink_buffer_factor * self.half_tile_size
         for polygon in polygons:
             polygon = affinity.scale(polygon, xfact=random.uniform(0.85, 1), yfact=random.uniform(0.85, 1))
-            polygon = polygon.buffer(-0.03 * self.half_tile_size)
+            # Mitred joins keep tile corners polygonal under negative buffering.
+            polygon = polygon.buffer(buffer_distance, join_style=self.shrink_join_style)
             polygons_shrinked += [polygon]
 
         return polygons_shrinked
+
+    def _convexify_tiles(self, polygons):
+        """Replace nearly-convex tiles with their convex hull.
+
+        After overlap subtraction tiles can end up with small concave bites that
+        rasterize as fuzzy edges. Replacing the polygon with its convex hull when
+        the area is already close to its hull's area (i.e. only a small spike or
+        bite is being filled) restores the polygonal Roman-mosaic feel without
+        meaningfully growing the tile into its neighbours.
+        """
+        polygons_new = []
+        threshold = self.convex_repair_threshold
+        for polygon in polygons:
+            try:
+                hull = polygon.convex_hull
+                if (
+                    hull.geom_type == "Polygon"
+                    and hull.area > 0
+                    and polygon.area / hull.area >= threshold
+                ):
+                    polygons_new.append(hull)
+                else:
+                    polygons_new.append(polygon)
+            except Exception:  # pylint: disable=broad-except
+                polygons_new.append(polygon)
+        return polygons_new
 
     def _repair_tiles(self, polygons):
         # remove or correct strange polygons
@@ -224,8 +279,13 @@ class MosaicTiles:
 
     def _reduce_edge_count(self, polygons, tol=20):
         polygons_new = []
+        # Configurable factor wins over the legacy "tol" inverse style.
+        if self.simplify_tolerance_factor is not None:
+            tolerance = self.half_tile_size * self.simplify_tolerance_factor
+        else:
+            tolerance = self.half_tile_size / tol
         for polygon in polygons:
-            polygon = polygon.simplify(tolerance=self.half_tile_size / tol)
+            polygon = polygon.simplify(tolerance=tolerance)
             polygons_new += [polygon]
         return polygons_new
 
@@ -293,23 +353,27 @@ class MosaicTiles:
         # Turn interactive plotting off
         plt.ioff()
         logger.info("Plotting polygons for mosaic")
-        fig, axes = plt.subplots(dpi=96, figsize=(self.config.mosaic_width / 2.54, self.config.mosaic_height / 2.54))
+        fig, axes = plt.subplots(
+            dpi=self.figure_dpi,
+            figsize=(self.config.mosaic_width / 2.54, self.config.mosaic_height / 2.54),
+        )
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         axes.invert_yaxis()
         axes.autoscale()
         axes.set_facecolor("slategray")
 
+        edge_color_cfg = self.tile_edge_color
+        edge_lw = self.tile_edge_lw
+
         for j, polygon in enumerate(tqdm(polygons)):
 
             if colors is not None:
                 color = colors[j]
-                edgecolor = "black"
             else:
                 color = "silver"
-                edgecolor = "black"
 
             corners = np.array(polygon.exterior.coords.xy).T
-            tile = patches.Polygon(corners, edgecolor=edgecolor, lw=0.3, facecolor=color)  # facecolor=color)
+            tile = patches.Polygon(corners, edgecolor=edge_color_cfg, lw=edge_lw, facecolor=color)
             axes.add_patch(tile)
 
         if background is not None:
