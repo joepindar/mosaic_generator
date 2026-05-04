@@ -1,0 +1,13 @@
+defaults:
+  - default
+
+image_path: coffee_cup.png
+output_folder: outputs
+edge_extraction_method: sobel
+coloring_method: original
+interactive_edge_modification: false
+save_intermediate_steps: false
+resize_image: false
+mosaic_height: 10
+mosaic_width: 10
+tile_size: 10

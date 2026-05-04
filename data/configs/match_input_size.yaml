@@ -1,0 +1,11 @@
+# Output image: same pixel width × height as the input (for the given output_dpi).
+# Mosaic figure size in cm is set from input pixels: cm = pixels * 2.54 / output_dpi,
+# matching matplotlib figsize (inches) × dpi used in savefig.
+#
+# Example:
+#   python main.py --config-name=match_input_size image_path=coffee_cup.png edge_extraction_method=sobel
+defaults:
+  - default
+
+match_output_to_input_pixels: true
+output_dpi: 96

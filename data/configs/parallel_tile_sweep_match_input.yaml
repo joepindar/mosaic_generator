@@ -1,0 +1,21 @@
+# Parallel multirun: tile_size 3..18 step 3; output PNG matches input pixel size (match_input_size).
+# Run: python main.py -m --config-name=parallel_tile_sweep_match_input
+defaults:
+  - match_input_size
+  - override hydra/launcher: joblib
+
+image_path: coffee_cup.png
+edge_extraction_method: sobel
+interactive_edge_modification: false
+save_intermediate_steps: false
+
+hydra:
+  mode: MULTIRUN
+  run:
+    dir: ${output_folder}/${now:%Y.%m.%d-%H-%M-%S}
+  sweep:
+    dir: ${output_folder}/multirun_${now:%Y.%m.%d-%H-%M-%S}
+    subdir: run_${hydra.job.num}
+  sweeper:
+    params:
+      tile_size: 3,6,9,12,15,18
