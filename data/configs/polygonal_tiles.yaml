@@ -1,0 +1,26 @@
+# Sharp, Roman-mosaic-style tiles closer to the look in
+# https://towardsdatascience.com/how-to-generate-roman-style-mosaics-with-python-11d5aa021b09/
+#
+# What this preset changes vs. `default`:
+#   - shrink_join_style: 2  -> mitred negative buffer keeps polygonal corners
+#                              (default is round, which rounds every corner).
+#   - convex_repair: true   -> replace nearly-convex tiles with their convex hull
+#                              to remove small concave bites left after overlap removal.
+#   - skip_thin_polygons    -> mirrors the upstream "skip very thin section" guard.
+#   - simplify_tolerance_factor: 0.15 -> stronger simplify pass; collapses tiny
+#                              concavities and antialiased corner artefacts.
+#   - tile_edge_lw: 0.15    -> finer tile outline; less halo at small tile sizes.
+#
+# Combine with `match_input_size` and a higher `output_dpi` (e.g. 192) for crisp output.
+defaults:
+  - default
+
+shrink_tiles: true
+shrink_buffer_factor: 0.03
+shrink_join_style: 2
+convex_repair: true
+convex_repair_threshold: 0.92
+simplify_tolerance_factor: 0.15
+skip_thin_polygons: true
+tile_edge_lw: 0.15
+tile_edge_color: black
