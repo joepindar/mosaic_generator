@@ -142,5 +142,16 @@ These knobs control the post-processing pass that turns raw polygons into final 
 - Description: Matplotlib colour for the tile outline. Use `null` (or omit) to disable outlines.
 - Example: `black`
 
+#### `gap_guideline_method`
+- Type: String
+- Description: How to derive raster guidelines for the gap-filling passes (after edge chains are tiled). `distance_stripes` builds offset contours from the distance transform to placed tiles, matching the approach described in [Beetz’s article](https://towardsdatascience.com/how-to-generate-roman-style-mosaics-with-python-11d5aa021b09/). `skeleton` uses the medial axis of free space (older behaviour in this fork).
+- Options: `distance_stripes`, `skeleton`
+- Example: `distance_stripes`
+
+#### `gap_chain_spacing_factor`
+- Type: Float
+- Description: For `distance_stripes`, spacing between gap guide stripes in units of **`half_tile × this factor`** (rounded to pixels). The legacy commented code used `0.5`.
+- Example: `0.5`
+
 ##
 Got an idea of a parameter that might be relevant to use? [Open an issue](https://github.com/JavierCoronel/mosaic_generator/issues/new/choose) describing your idea!

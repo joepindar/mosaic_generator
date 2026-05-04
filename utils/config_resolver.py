@@ -68,6 +68,10 @@ class ConfigResolver:
             cfg.tile_edge_lw = cfg.get("tile_edge_lw", 0.3)
             cfg.tile_edge_color = cfg.get("tile_edge_color", "black")
 
+            # Gap-fill guidelines (see mosaic_guides.MosaicGuides.get_gaps_from_polygons).
+            cfg.gap_guideline_method = cfg.get("gap_guideline_method", "distance_stripes")
+            cfg.gap_chain_spacing_factor = cfg.get("gap_chain_spacing_factor", 0.5)
+
             cfg.mosaic_width, cfg.mosaic_height = self._resolve_mosaic_dimensions(cfg=cfg)
             cfg.tile_size = self._resolve_tile_size(cfg=cfg)
 

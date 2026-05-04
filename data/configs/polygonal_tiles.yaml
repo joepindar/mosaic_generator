@@ -10,11 +10,16 @@
 #   - simplify_tolerance_factor: 0.15 -> stronger simplify pass; collapses tiny
 #                              concavities and antialiased corner artefacts.
 #   - tile_edge_lw: 0.15    -> finer tile outline; less halo at small tile sizes.
+#   - gap_guideline_method  -> `distance_stripes` matches the article (offset contours
+#                              from the distance transform to placed tiles).
+#                              Use `skeleton` for the older medial-axis gap paths.
 #
 # Combine with `match_input_size` and a higher `output_dpi` (e.g. 192) for crisp output.
 defaults:
   - default
 
+gap_guideline_method: distance_stripes
+gap_chain_spacing_factor: 0.5
 shrink_tiles: true
 shrink_buffer_factor: 0.03
 shrink_join_style: 2
