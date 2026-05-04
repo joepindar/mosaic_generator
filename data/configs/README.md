@@ -78,5 +78,69 @@ Use the following keybindings to modify the edges:
 - Description: Path to an image containing extracted edges. Useful for loading previously modified and saved edges. By default, `null` meaning no input file with edeges.
 - Example: `null`
 
+#### `output_dpi`
+- Type: Integer
+- Description: DPI used when saving the figure to PNG. Combined with `figsize` (derived from `mosaic_width`/`mosaic_height` in cm) this determines the output pixel resolution.
+- Example: `96`
+
+#### `match_output_to_input_pixels`
+- Type: Boolean
+- Description: If `True`, sets `mosaic_width`/`mosaic_height` so the saved PNG has the same pixel size as the input image at the configured `output_dpi`.
+- Example: `True`
+
+#### `figure_dpi`
+- Type: Integer
+- Description: Matplotlib figure DPI used during rendering. Defaults to `output_dpi`.
+- Example: `192`
+
+### Tile shape / appearance
+
+These knobs control the post-processing pass that turns raw polygons into final tiles.
+
+#### `shrink_tiles`
+- Type: Boolean
+- Description: If `True`, applies a random scale + small negative buffer to each tile to mimic stone irregularity.
+- Example: `True`
+
+#### `shrink_join_style`
+- Type: Integer
+- Description: Shapely `join_style` used by the negative buffer in the shrink step. `1` rounds corners (the original behaviour), `2` keeps mitred corners (recommended for the Roman-mosaic look), `3` bevels them.
+- Example: `2`
+
+#### `shrink_buffer_factor`
+- Type: Float
+- Description: Negative-buffer distance as a fraction of `half_tile_size`. Larger values shrink tiles more.
+- Example: `0.03`
+
+#### `convex_repair`
+- Type: Boolean
+- Description: If `True`, tiles whose area is at least `convex_repair_threshold` of their convex hull's area are replaced with the hull. Smooths out small concave bites left after overlap subtraction.
+- Example: `True`
+
+#### `convex_repair_threshold`
+- Type: Float
+- Description: Minimum `area / convex_hull.area` ratio required to apply the convex repair. Lower values are more aggressive.
+- Example: `0.92`
+
+#### `simplify_tolerance_factor`
+- Type: Float
+- Description: Polygon simplification tolerance as a fraction of `half_tile_size`. Larger values produce simpler, more polygonal tiles.
+- Example: `0.05`
+
+#### `skip_thin_polygons`
+- Type: Boolean
+- Description: If `True`, skips tile emission when only a very short section of the guideline has been traversed (mirrors the upstream algorithm). Helps avoid sliver/disc-shaped tiles.
+- Example: `True`
+
+#### `tile_edge_lw`
+- Type: Float
+- Description: Line width of each tile's outline in the rendered figure.
+- Example: `0.3`
+
+#### `tile_edge_color`
+- Type: String
+- Description: Matplotlib colour for the tile outline. Use `null` (or omit) to disable outlines.
+- Example: `black`
+
 ##
 Got an idea of a parameter that might be relevant to use? [Open an issue](https://github.com/JavierCoronel/mosaic_generator/issues/new/choose) describing your idea!
