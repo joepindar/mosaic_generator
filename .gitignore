@@ -47,3 +47,6 @@ dmypy.json
 *.caffemodel
 *.prototxt
 *.yaml
+!data/configs/*.yaml
+
+.DS_Store
