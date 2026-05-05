@@ -4,22 +4,20 @@
 # What this preset changes vs. `default`:
 #   - shrink_join_style: 2  -> mitred negative buffer keeps polygonal corners
 #                              (default is round, which rounds every corner).
-#   - convex_repair: true   -> replace nearly-convex tiles with their convex hull
-#                              to remove small concave bites left after overlap removal.
+#   - convex_repair: true   -> two-stage repair: spike removal + near-convex hull
+#                              replacement (default is off).
 #   - skip_thin_polygons    -> mirrors the upstream "skip very thin section" guard.
 #   - simplify_tolerance_factor: 0.15 -> stronger simplify pass; collapses tiny
 #                              concavities and antialiased corner artefacts.
 #   - tile_edge_lw: 0.15    -> finer tile outline; less halo at small tile sizes.
-#   - gap_guideline_method  -> `distance_stripes` matches the article (offset contours
-#                              from the distance transform to placed tiles).
-#                              Use `skeleton` for the older medial-axis gap paths.
+#   Gap filling and colour sampling inherit the article-style defaults from
+#   default.yaml: gap_guideline_method=distance_stripes, gap_tile_placement=square,
+#   coloring_sample=polygon_mean.
 #
 # Combine with `match_input_size` and a higher `output_dpi` (e.g. 192) for crisp output.
 defaults:
   - default
 
-gap_guideline_method: distance_stripes
-gap_chain_spacing_factor: 0.5
 shrink_tiles: true
 shrink_buffer_factor: 0.03
 shrink_join_style: 2

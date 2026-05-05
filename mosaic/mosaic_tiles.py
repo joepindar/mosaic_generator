@@ -40,11 +40,14 @@ class MosaicTiles:
         self.shrink_join_style: int = cfg_get("shrink_join_style", 2)
         self.convex_repair: bool = cfg_get("convex_repair", False)
         self.convex_repair_threshold: float = cfg_get("convex_repair_threshold", 0.92)
+        self.spike_removal_passes: int = cfg_get("spike_removal_passes", 3)
+        self.spike_max_loss_fraction: float = cfg_get("spike_max_loss_fraction", 0.05)
         self.simplify_tolerance_factor: float = cfg_get("simplify_tolerance_factor", 0.05)
         self.skip_thin_polygons: bool = cfg_get("skip_thin_polygons", True)
         self.figure_dpi: int = cfg_get("figure_dpi", cfg_get("output_dpi", 96))
         self.tile_edge_lw: float = cfg_get("tile_edge_lw", 0.3)
         self.tile_edge_color = cfg_get("tile_edge_color", "black")
+        self.gap_tile_step_factor: float = cfg_get("gap_tile_step_factor", 2.0)
 
     def place_tiles_along_guides(self, chains: List, angles: np.array, polygons: List = None) -> List:
         """Creates polygons (tiles) along guides
@@ -75,6 +78,74 @@ class MosaicTiles:
             preselected_nearby_polygons = [poly for poly in polygons if poly.intersects(search_area)]
 
             polygons = self.estimate_polygons_from_chain(chain, angles, polygons, preselected_nearby_polygons)
+
+        return polygons
+
+    def place_squares_into_gaps(self, chains: List, polygons: List = None) -> List:
+        """Fill gaps with axis-aligned squares (article / Beetz-style gap filler).
+
+        Mirrors `place_tiles_into_gaps` from yobeatz/mosaic: along each gap guide
+        chain we drop a square of side ``2*half_tile`` every ``step`` pixels and
+        subtract any overlap with neighbouring tiles. This produces the regular
+        grid look seen in interior fill regions of the TDS article reference
+        image, instead of curve-following rotated tiles.
+        """
+        if polygons is None:
+            polygons = []
+        half = self.half_tile_size
+        step = max(1, int(round(half * self.gap_tile_step_factor)))
+        min_delta = max(1, half // 2)
+        logger.info(
+            "Placing axis-aligned squares into %d gap chains (step=%d px, side=%d px)",
+            len(chains),
+            step,
+            2 * half,
+        )
+        for chain in tqdm(chains):
+            if len(chain) < 2:
+                continue
+
+            chain_xy = np.array(chain)[:, ::-1]
+            try:
+                search_area = LineString(chain_xy).buffer(2.1 * half)
+            except Exception:  # pylint: disable=broad-except
+                continue
+            preselected_nearby_polygons = [poly for poly in polygons if poly.intersects(search_area)]
+
+            indices = list(range(0, len(chain), step))
+            last_i = len(chain) - 1
+            if not indices:
+                continue
+            if indices[-1] != last_i and (last_i - indices[-1]) >= min_delta:
+                indices.append(last_i)
+
+            for i in indices:
+                y_coord, x_coord = chain[i]
+                tile = Polygon(
+                    [
+                        (x_coord - half, y_coord + half),
+                        (x_coord + half, y_coord + half),
+                        (x_coord + half, y_coord - half),
+                        (x_coord - half, y_coord - half),
+                    ]
+                )
+                tile_buff = tile.buffer(0.1)
+                nearby = [poly for poly in preselected_nearby_polygons if tile_buff.intersects(poly)]
+                for neighbour in nearby:
+                    try:
+                        tile = tile.difference(neighbour)
+                    except Exception:  # pylint: disable=broad-except
+                        tile = tile.difference(neighbour.buffer(0.1))
+                if tile.geom_type == "MultiPolygon":
+                    largest_idx = int(np.argmax([p.area for p in tile.geoms]))
+                    tile = tile.geoms[largest_idx]
+                if (
+                    tile.geom_type == "Polygon"
+                    and tile.is_valid
+                    and tile.area >= 0.05 * self.tile_area
+                ):
+                    polygons.append(tile)
+                    preselected_nearby_polygons.append(tile)
 
         return polygons
 
@@ -235,18 +306,30 @@ class MosaicTiles:
         return polygons_shrinked
 
     def _convexify_tiles(self, polygons):
-        """Replace nearly-convex tiles with their convex hull.
+        """Approximate the article's convex repair pass.
 
-        After overlap subtraction tiles can end up with small concave bites that
-        rasterize as fuzzy edges. Replacing the polygon with its convex hull when
-        the area is already close to its hull's area (i.e. only a small spike or
-        bite is being filled) restores the polygonal Roman-mosaic feel without
-        meaningfully growing the tile into its neighbours.
+        Two-stage repair, run only when ``convex_repair`` is true:
+        1. **Spike removal** (article strategy 1): iteratively drop vertices whose
+           removal *decreases* the polygon area (i.e. the vertex was a spike
+           sticking out). Bounded by ``spike_removal_passes``.
+        2. **Hull replacement** (approximation of strategy 2): if after spike
+           removal the polygon is already very close to its convex hull
+           (``area / hull.area >= convex_repair_threshold``) replace it with the
+           hull. The article's true split-into-two-convex-pieces is approximated
+           here by leaving deeply concave tiles alone.
         """
         polygons_new = []
         threshold = self.convex_repair_threshold
         for polygon in polygons:
+            if polygon.geom_type != "Polygon" or not polygon.is_valid:
+                polygons_new.append(polygon)
+                continue
             try:
+                polygon = self._spike_removal(
+                    polygon,
+                    max_passes=self.spike_removal_passes,
+                    max_loss_fraction=self.spike_max_loss_fraction,
+                )
                 hull = polygon.convex_hull
                 if (
                     hull.geom_type == "Polygon"
@@ -259,6 +342,55 @@ class MosaicTiles:
             except Exception:  # pylint: disable=broad-except
                 polygons_new.append(polygon)
         return polygons_new
+
+    @staticmethod
+    def _spike_removal(polygon, max_passes: int = 3, max_loss_fraction: float = 0.05):
+        """Article-style spike removal.
+
+        Beetz: "the spiky part of a polygon is simply removed if the area of the
+        polygon is **not changed considerably**". A spike is therefore a vertex
+        whose removal:
+        - decreases area (the vertex was sticking out, not a dent), AND
+        - decreases it by less than ``max_loss_fraction`` of the polygon's area
+          (i.e. the spike was thin / small).
+
+        Normal corners of a clean polygon should never qualify because removing
+        them slices off a large triangular chunk. The greedy sweep picks the
+        vertex with the *smallest* qualifying area loss (most spike-like), and
+        repeats up to ``max_passes`` times.
+        """
+        for _ in range(max_passes):
+            coords = list(polygon.exterior.coords)[:-1]
+            n = len(coords)
+            if n <= 3:
+                return polygon
+            orig_area = polygon.area
+            if orig_area <= 0:
+                return polygon
+            best_polygon = polygon
+            best_loss_fraction = float("inf")
+            for i in range(n):
+                new_coords = coords[:i] + coords[i + 1 :]
+                try:
+                    candidate = Polygon(new_coords)
+                except Exception:  # pylint: disable=broad-except
+                    continue
+                if not candidate.is_valid or candidate.is_empty:
+                    continue
+                new_area = candidate.area
+                if new_area >= orig_area:
+                    # Reflex vertex (dent) — strategy 2 territory; we leave it.
+                    continue
+                loss_fraction = (orig_area - new_area) / orig_area
+                if loss_fraction > max_loss_fraction:
+                    continue
+                if loss_fraction < best_loss_fraction:
+                    best_loss_fraction = loss_fraction
+                    best_polygon = candidate
+            if best_loss_fraction == float("inf"):
+                break
+            polygon = best_polygon
+        return polygon
 
     def _repair_tiles(self, polygons):
         # remove or correct strange polygons

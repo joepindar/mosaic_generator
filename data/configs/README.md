@@ -7,7 +7,8 @@ To get started, consider using the following templates and adjust them to tailor
 
 You can run two types of hydra configs:
 * [`default.yaml`](./default.yaml) has a list of parameters to run a single execution for mosaic generation.
-* [`default_parallel.yaml`](./default_parallel.yaml) has additional hydra configurations to run multiple mosaic generations in parallel. Here you can list multiple values for a single parameter under the `sweeper/params` part of the `.yaml` file.
+* [`default_parallel.yaml`](./default_parallel.yaml) has additional hydra configurations to run multiple mosaic generations in parallel. Here you can list multiple values for a single parameter under the `hydra/sweeper/params` part of the `.yaml` file.
+* Dedicated sweep YAMLs extend a preset plus multirun: e.g. [`multirun_hed_polygonal_distance_stripes_coffee_cup.yaml`](./multirun_hed_polygonal_distance_stripes_coffee_cup.yaml) (HED + `polygonal_tiles` + `distance_stripes`, `tile_size` sweep on `coffee_cup.png`, input-sized PNG). Run with `-m`; **`COMPARISON.md`** is emitted in the sweep output folder when the run finishes ([`utils/multirun_comparison.py`](../utils/multirun_comparison.py)). Rebuild with [`scripts/write_multirun_comparison.py`](../scripts/write_multirun_comparison.py) if needed. See repo [README](../../README.md#multirun-parameter-sweep).
 
 ## Parameters
 Here you can find a list of the posible parameters with their explaination and possible values:
@@ -18,8 +19,8 @@ Here you can find a list of the posible parameters with their explaination and p
 
 #### `output_folder`
 - Type: String
-- Description: Absolute or relative path to the output folder where generated mosaics will be saved.
-- Example: `/path/to/folder`
+- Description: Base folder where Hydra writes timestamped **`hydra.run.dir`** (single runs) and **`hydra.sweep.dir`** (multiruns). Defaults to **`outputs`** in [`default.yaml`](./default.yaml); the resolver uses **`outputs`** if the key is missing. Set to another path when you want artefacts elsewhere.
+- Example: `outputs`
 
 #### `edge_extraction_method`
 - Type: String
@@ -114,13 +115,23 @@ These knobs control the post-processing pass that turns raw polygons into final 
 
 #### `convex_repair`
 - Type: Boolean
-- Description: If `True`, tiles whose area is at least `convex_repair_threshold` of their convex hull's area are replaced with the hull. Smooths out small concave bites left after overlap subtraction.
+- Description: If `True`, runs an article-style two-stage convex repair: (1) iteratively drops vertices whose removal *decreases* polygon area (spike removal); (2) replaces near-convex tiles with their convex hull when `area / hull.area >= convex_repair_threshold`. Smooths small concave bites left after overlap subtraction.
 - Example: `True`
 
 #### `convex_repair_threshold`
 - Type: Float
-- Description: Minimum `area / convex_hull.area` ratio required to apply the convex repair. Lower values are more aggressive.
+- Description: Minimum `area / convex_hull.area` ratio required to apply the convex hull replacement (stage 2 of `convex_repair`). Lower values are more aggressive.
 - Example: `0.92`
+
+#### `spike_removal_passes`
+- Type: Integer
+- Description: Maximum number of greedy sweeps performed by stage 1 of `convex_repair`. Each sweep removes at most one *thin* spike vertex (see `spike_max_loss_fraction`). Tile polygons are short, so 3 is usually enough.
+- Example: `3`
+
+#### `spike_max_loss_fraction`
+- Type: Float
+- Description: Threshold for stage 1 of `convex_repair`. A vertex is removed only if its removal both decreases area (i.e. it sticks out) **and** the relative area loss is below this fraction (so the spike is thin). The article's rule is "the area must not change considerably". Setting this too high (e.g. > 0.2) lets the pass eat real corners and shred convex tiles into triangles.
+- Example: `0.05`
 
 #### `simplify_tolerance_factor`
 - Type: Float
@@ -144,14 +155,34 @@ These knobs control the post-processing pass that turns raw polygons into final 
 
 #### `gap_guideline_method`
 - Type: String
-- Description: How to derive raster guidelines for the gap-filling passes (after edge chains are tiled). `distance_stripes` builds offset contours from the distance transform to placed tiles, matching the approach described in [Beetz’s article](https://towardsdatascience.com/how-to-generate-roman-style-mosaics-with-python-11d5aa021b09/). `skeleton` uses the medial axis of free space (older behaviour in this fork).
-- Options: `distance_stripes`, `skeleton`
+- Description: How to derive raster guidelines for the gap-filling passes (after edge chains are tiled). **`distance_stripes`** (default) builds offset contours from the distance transform to placed tiles, matching the approach described in [Beetz’s article](https://towardsdatascience.com/how-to-generate-roman-style-mosaics-with-python-11d5aa021b09/). Set to **`skeleton`** only if you explicitly want the older medial-axis-of-gaps behaviour from an earlier version of this fork.
+- Options: `distance_stripes` (default), `skeleton` (opt-in legacy)
 - Example: `distance_stripes`
 
 #### `gap_chain_spacing_factor`
 - Type: Float
 - Description: For `distance_stripes`, spacing between gap guide stripes in units of **`half_tile × this factor`** (rounded to pixels). The legacy commented code used `0.5`.
 - Example: `0.5`
+
+#### `gap_tile_placement`
+- Type: String
+- Description: How tiles are placed once the gap guidelines have been built. **`square`** (default) drops axis-aligned squares of side `2 × half_tile` along each gap chain and clips them against neighbours — matches `place_tiles_into_gaps` from [Beetz’s upstream](https://github.com/yobeatz/mosaic) and produces the regular interior grid seen in the article. **`rotated`** uses the legacy curve-following placement (the same path used for the rim pass) and tends to swirl the interior fill.
+- Options: `square` (default), `rotated`
+- Example: `square`
+
+#### `gap_tile_step_factor`
+- Type: Float
+- Description: Step between consecutive square placements along a gap chain, in units of `half_tile × this factor`. The article uses `2.0` (i.e. one tile width).
+- Example: `2.0`
+
+#### `coloring_sample`
+- Type: String
+- Description: How each tile's RGB colour is sampled from the source image.
+  - `polygon_mean` (default, article-style): mean over pixels truly inside the polygon (uses `skimage.draw.polygon` to rasterise the tile shape).
+  - `center`: single representative-point pixel — fastest, blockier look.
+  - `bbox_mean`: legacy axis-aligned bounding-box mean. Includes pixels outside the tile, which can leak neighbour colours and is what this fork produced before.
+- Options: `polygon_mean` (default), `center`, `bbox_mean`
+- Example: `polygon_mean`
 
 ##
 Got an idea of a parameter that might be relevant to use? [Open an issue](https://github.com/JavierCoronel/mosaic_generator/issues/new/choose) describing your idea!

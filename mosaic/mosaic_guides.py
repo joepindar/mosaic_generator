@@ -154,6 +154,7 @@ class MosaicGuides:
         img_chains_2 = closing(img_chains, disk(2))
         distance_to_tile = morphology.distance_transform_edt(img_chains_2 == 0).astype(int)
 
+        # Default / supported modes: distance_stripes (article-style). skeleton is opt-in (legacy).
         method = self.config_params.get("gap_guideline_method", "distance_stripes")
         if method not in ("skeleton", "distance_stripes"):
             logger.warning("Unknown gap_guideline_method=%r; using distance_stripes", method)
