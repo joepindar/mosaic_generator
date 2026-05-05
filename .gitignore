@@ -45,5 +45,20 @@ dmypy.json
 *.jpg
 *.npy
 *.caffemodel
+!edges/hed_pretrained_bsds.caffemodel
 *.prototxt
+!edges/deploy.prototxt
 *.yaml
+!data/configs/*.yaml
+# Local-only / exploratory configs (kept on disk, not in git)
+data/configs/smoke_test.yaml
+data/configs/parallel_tile_sweep_match_input.yaml
+data/configs/parallel_tile_sweep_polygonal.yaml
+
+# Local matplotlib cache (headless / CI)
+.mplconfig/
+
+# Hydra single/multi run outputs
+outputs/
+
+.DS_Store

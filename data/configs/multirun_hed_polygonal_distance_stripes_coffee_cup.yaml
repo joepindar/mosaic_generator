@@ -1,0 +1,49 @@
+# Multirun: HED edges + polygonal_tiles preset + distance_stripes (default gap guidelines)
+# over a range of tile sizes on coffee_cup.png.
+#
+# Output PNG width × height follows the coffee cup pixels at output_dpi (same as parallel_tile_sweep_match_input).
+#
+# Run:
+#   python main.py -m --config-name=multirun_hed_polygonal_distance_stripes_coffee_cup
+#
+# COMPARISON.md: written automatically in the sweep directory when the multirun finishes
+# (`hydra.callbacks.multirun_comparison`). Re-run manually if needed:
+#   python scripts/write_multirun_comparison.py outputs/multirun_hed_polygonal_coffee_cup_<timestamp>
+#
+# Requires hydra-joblib-launcher (`pip install hydra-joblib-launcher`). Omit `override hydra/launcher`
+# below for sequential runs only.
+#
+# Parallelism: `hydra.launcher.n_jobs` below is `-1` (all logical CPUs). Use eg.
+# `hydra.launcher.n_jobs=4` on the CLI only when throttling thermal/RAM.
+defaults:
+  - polygonal_tiles
+  - override hydra/launcher: joblib
+  - _self_
+
+image_path: coffee_cup.png
+edge_extraction_method: HED
+gap_guideline_method: distance_stripes
+interactive_edge_modification: false
+save_intermediate_steps: false
+match_output_to_input_pixels: true
+output_dpi: 96
+
+hydra:
+  mode: MULTIRUN
+  callbacks:
+    multirun_comparison:
+      _target_: utils.multirun_comparison.MultirunComparisonHydraCallback
+      cols: 3
+      title: "Multirun comparison: coffee_cup tile_size sweep (HED + polygonal_tiles + distance_stripes)"
+  # Concurrent mosaic jobs (-1 = all CPUs; maximise throughput for sweeps).
+  launcher:
+    n_jobs: -1
+  run:
+    dir: ${output_folder}/${now:%Y.%m.%d-%H-%M-%S}
+  sweep:
+    dir: ${output_folder}/multirun_hed_polygonal_coffee_cup_${now:%Y.%m.%d-%H-%M-%S}
+    subdir: tile_${tile_size}
+  sweeper:
+    params:
+      # Step 3; skip tile_size=3 (very expensive). Extend with eg. 27,30 as needed.
+      tile_size: 6,9,12,15,18,21,24

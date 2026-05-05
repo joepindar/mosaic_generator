@@ -31,6 +31,24 @@ class MosaicTiles:
         self.mosaic_height = 0
         self.mosaic_width = 0
 
+        cfg_get = config_parameters.get
+        self.shrink_tiles: bool = cfg_get("shrink_tiles", True)
+        self.shrink_buffer_factor: float = cfg_get("shrink_buffer_factor", 0.03)
+        # Shapely join style for negative buffer: 1=round, 2=mitre, 3=bevel.
+        # Round (1) erodes corners into circular arcs and is the main reason
+        # tiles appear "blobby" at small sizes.
+        self.shrink_join_style: int = cfg_get("shrink_join_style", 2)
+        self.convex_repair: bool = cfg_get("convex_repair", False)
+        self.convex_repair_threshold: float = cfg_get("convex_repair_threshold", 0.92)
+        self.spike_removal_passes: int = cfg_get("spike_removal_passes", 3)
+        self.spike_max_loss_fraction: float = cfg_get("spike_max_loss_fraction", 0.05)
+        self.simplify_tolerance_factor: float = cfg_get("simplify_tolerance_factor", 0.05)
+        self.skip_thin_polygons: bool = cfg_get("skip_thin_polygons", True)
+        self.figure_dpi: int = cfg_get("figure_dpi", cfg_get("output_dpi", 96))
+        self.tile_edge_lw: float = cfg_get("tile_edge_lw", 0.3)
+        self.tile_edge_color = cfg_get("tile_edge_color", "black")
+        self.gap_tile_step_factor: float = cfg_get("gap_tile_step_factor", 2.0)
+
     def place_tiles_along_guides(self, chains: List, angles: np.array, polygons: List = None) -> List:
         """Creates polygons (tiles) along guides
 
@@ -52,12 +70,82 @@ class MosaicTiles:
         if polygons is None:
             polygons = []
         for chain in tqdm(chains):
+            if len(chain) < 2:
+                continue
 
             # consider existing polygons next to the new lane (reason: speed)
             search_area = LineString(np.array(chain)[:, ::-1]).buffer(2.1 * self.half_tile_size)
             preselected_nearby_polygons = [poly for poly in polygons if poly.intersects(search_area)]
 
             polygons = self.estimate_polygons_from_chain(chain, angles, polygons, preselected_nearby_polygons)
+
+        return polygons
+
+    def place_squares_into_gaps(self, chains: List, polygons: List = None) -> List:
+        """Fill gaps with axis-aligned squares (article / Beetz-style gap filler).
+
+        Mirrors `place_tiles_into_gaps` from yobeatz/mosaic: along each gap guide
+        chain we drop a square of side ``2*half_tile`` every ``step`` pixels and
+        subtract any overlap with neighbouring tiles. This produces the regular
+        grid look seen in interior fill regions of the TDS article reference
+        image, instead of curve-following rotated tiles.
+        """
+        if polygons is None:
+            polygons = []
+        half = self.half_tile_size
+        step = max(1, int(round(half * self.gap_tile_step_factor)))
+        min_delta = max(1, half // 2)
+        logger.info(
+            "Placing axis-aligned squares into %d gap chains (step=%d px, side=%d px)",
+            len(chains),
+            step,
+            2 * half,
+        )
+        for chain in tqdm(chains):
+            if len(chain) < 2:
+                continue
+
+            chain_xy = np.array(chain)[:, ::-1]
+            try:
+                search_area = LineString(chain_xy).buffer(2.1 * half)
+            except Exception:  # pylint: disable=broad-except
+                continue
+            preselected_nearby_polygons = [poly for poly in polygons if poly.intersects(search_area)]
+
+            indices = list(range(0, len(chain), step))
+            last_i = len(chain) - 1
+            if not indices:
+                continue
+            if indices[-1] != last_i and (last_i - indices[-1]) >= min_delta:
+                indices.append(last_i)
+
+            for i in indices:
+                y_coord, x_coord = chain[i]
+                tile = Polygon(
+                    [
+                        (x_coord - half, y_coord + half),
+                        (x_coord + half, y_coord + half),
+                        (x_coord + half, y_coord - half),
+                        (x_coord - half, y_coord - half),
+                    ]
+                )
+                tile_buff = tile.buffer(0.1)
+                nearby = [poly for poly in preselected_nearby_polygons if tile_buff.intersects(poly)]
+                for neighbour in nearby:
+                    try:
+                        tile = tile.difference(neighbour)
+                    except Exception:  # pylint: disable=broad-except
+                        tile = tile.difference(neighbour.buffer(0.1))
+                if tile.geom_type == "MultiPolygon":
+                    largest_idx = int(np.argmax([p.area for p in tile.geoms]))
+                    tile = tile.geoms[largest_idx]
+                if (
+                    tile.geom_type == "Polygon"
+                    and tile.is_valid
+                    and tile.area >= 0.05 * self.tile_area
+                ):
+                    polygons.append(tile)
+                    preselected_nearby_polygons.append(tile)
 
         return polygons
 
@@ -98,6 +186,15 @@ class MosaicTiles:
 
             if chain_ready:
                 line = self._get_line_from_coords(x_coord, y_coord, angle)
+
+                # Mirror upstream behaviour: a section thinner than ~3 points along the
+                # guide produces near-degenerate polygons that round into specks during
+                # post-processing. Advance the start anchor without emitting a tile.
+                if self.skip_thin_polygons and (point_idx - point_idx_start) <= 2:
+                    line_start = line
+                    point_angle_start = angle
+                    point_idx_start = point_idx
+                    continue
 
                 polygons, preselected_nearby_polygons = self._add_polygon(
                     line_start, line, polygons, preselected_nearby_polygons
@@ -177,7 +274,7 @@ class MosaicTiles:
             i_largest = np.argmax([p_i.area for p_i in polygon.geoms])
             polygon = polygon.geoms[i_largest]
         # remove pathologic polygons with holes (rare event):
-        if polygon.type not in ["MultiLineString", "LineString", "GeometryCollection"]:
+        if polygon.geom_type not in ["MultiLineString", "LineString", "GeometryCollection"]:
             if polygon.interiors:  # check for attribute interiors if accessible
                 polygon = Polygon(list(polygon.exterior.coords))
 
@@ -187,27 +284,119 @@ class MosaicTiles:
 
         logger.info("Posptrocessing mosaic")
         # complete_polygons = self.cut_tiles_outside_frame(polygons)
-        shrinked_polygons = self._irregular_shrink(polygons)
-        repaired_polygons = self._repair_tiles(shrinked_polygons)
-        reduced_polygons = self._reduce_edge_count(repaired_polygons)
-        polygons = self._drop_small_tiles(reduced_polygons)
+        if self.shrink_tiles:
+            polygons = self._irregular_shrink(polygons)
+        polygons = self._repair_tiles(polygons)
+        if self.convex_repair:
+            polygons = self._convexify_tiles(polygons)
+        polygons = self._reduce_edge_count(polygons)
+        polygons = self._drop_small_tiles(polygons)
 
         return polygons
 
     def _irregular_shrink(self, polygons):
         polygons_shrinked = []
+        buffer_distance = -self.shrink_buffer_factor * self.half_tile_size
         for polygon in polygons:
             polygon = affinity.scale(polygon, xfact=random.uniform(0.85, 1), yfact=random.uniform(0.85, 1))
-            polygon = polygon.buffer(-0.03 * self.half_tile_size)
+            # Mitred joins keep tile corners polygonal under negative buffering.
+            polygon = polygon.buffer(buffer_distance, join_style=self.shrink_join_style)
             polygons_shrinked += [polygon]
 
         return polygons_shrinked
+
+    def _convexify_tiles(self, polygons):
+        """Approximate the article's convex repair pass.
+
+        Two-stage repair, run only when ``convex_repair`` is true:
+        1. **Spike removal** (article strategy 1): iteratively drop vertices whose
+           removal *decreases* the polygon area (i.e. the vertex was a spike
+           sticking out). Bounded by ``spike_removal_passes``.
+        2. **Hull replacement** (approximation of strategy 2): if after spike
+           removal the polygon is already very close to its convex hull
+           (``area / hull.area >= convex_repair_threshold``) replace it with the
+           hull. The article's true split-into-two-convex-pieces is approximated
+           here by leaving deeply concave tiles alone.
+        """
+        polygons_new = []
+        threshold = self.convex_repair_threshold
+        for polygon in polygons:
+            if polygon.geom_type != "Polygon" or not polygon.is_valid:
+                polygons_new.append(polygon)
+                continue
+            try:
+                polygon = self._spike_removal(
+                    polygon,
+                    max_passes=self.spike_removal_passes,
+                    max_loss_fraction=self.spike_max_loss_fraction,
+                )
+                hull = polygon.convex_hull
+                if (
+                    hull.geom_type == "Polygon"
+                    and hull.area > 0
+                    and polygon.area / hull.area >= threshold
+                ):
+                    polygons_new.append(hull)
+                else:
+                    polygons_new.append(polygon)
+            except Exception:  # pylint: disable=broad-except
+                polygons_new.append(polygon)
+        return polygons_new
+
+    @staticmethod
+    def _spike_removal(polygon, max_passes: int = 3, max_loss_fraction: float = 0.05):
+        """Article-style spike removal.
+
+        Beetz: "the spiky part of a polygon is simply removed if the area of the
+        polygon is **not changed considerably**". A spike is therefore a vertex
+        whose removal:
+        - decreases area (the vertex was sticking out, not a dent), AND
+        - decreases it by less than ``max_loss_fraction`` of the polygon's area
+          (i.e. the spike was thin / small).
+
+        Normal corners of a clean polygon should never qualify because removing
+        them slices off a large triangular chunk. The greedy sweep picks the
+        vertex with the *smallest* qualifying area loss (most spike-like), and
+        repeats up to ``max_passes`` times.
+        """
+        for _ in range(max_passes):
+            coords = list(polygon.exterior.coords)[:-1]
+            n = len(coords)
+            if n <= 3:
+                return polygon
+            orig_area = polygon.area
+            if orig_area <= 0:
+                return polygon
+            best_polygon = polygon
+            best_loss_fraction = float("inf")
+            for i in range(n):
+                new_coords = coords[:i] + coords[i + 1 :]
+                try:
+                    candidate = Polygon(new_coords)
+                except Exception:  # pylint: disable=broad-except
+                    continue
+                if not candidate.is_valid or candidate.is_empty:
+                    continue
+                new_area = candidate.area
+                if new_area >= orig_area:
+                    # Reflex vertex (dent) — strategy 2 territory; we leave it.
+                    continue
+                loss_fraction = (orig_area - new_area) / orig_area
+                if loss_fraction > max_loss_fraction:
+                    continue
+                if loss_fraction < best_loss_fraction:
+                    best_loss_fraction = loss_fraction
+                    best_polygon = candidate
+            if best_loss_fraction == float("inf"):
+                break
+            polygon = best_polygon
+        return polygon
 
     def _repair_tiles(self, polygons):
         # remove or correct strange polygons
         polygons_new = []
         for polygon in polygons:
-            if polygon.type == "MultiPolygon":
+            if polygon.geom_type == "MultiPolygon":
                 for polygon_repaired in polygon.geoms:
                     polygons_new += [polygon_repaired]
             else:
@@ -215,15 +404,20 @@ class MosaicTiles:
 
         polygons_new2 = []
         for polygon in polygons_new:
-            if polygon.exterior.type == "LinearRing":
+            if polygon.exterior.geom_type == "LinearRing":
                 polygons_new2 += [polygon]
 
         return polygons_new2
 
     def _reduce_edge_count(self, polygons, tol=20):
         polygons_new = []
+        # Configurable factor wins over the legacy "tol" inverse style.
+        if self.simplify_tolerance_factor is not None:
+            tolerance = self.half_tile_size * self.simplify_tolerance_factor
+        else:
+            tolerance = self.half_tile_size / tol
         for polygon in polygons:
-            polygon = polygon.simplify(tolerance=self.half_tile_size / tol)
+            polygon = polygon.simplify(tolerance=tolerance)
             polygons_new += [polygon]
         return polygons_new
 
@@ -291,23 +485,27 @@ class MosaicTiles:
         # Turn interactive plotting off
         plt.ioff()
         logger.info("Plotting polygons for mosaic")
-        fig, axes = plt.subplots(dpi=96, figsize=(self.config.mosaic_width / 2.54, self.config.mosaic_height / 2.54))
+        fig, axes = plt.subplots(
+            dpi=self.figure_dpi,
+            figsize=(self.config.mosaic_width / 2.54, self.config.mosaic_height / 2.54),
+        )
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         axes.invert_yaxis()
         axes.autoscale()
         axes.set_facecolor("slategray")
 
+        edge_color_cfg = self.tile_edge_color
+        edge_lw = self.tile_edge_lw
+
         for j, polygon in enumerate(tqdm(polygons)):
 
             if colors is not None:
                 color = colors[j]
-                edgecolor = "black"
             else:
                 color = "silver"
-                edgecolor = "black"
 
             corners = np.array(polygon.exterior.coords.xy).T
-            tile = patches.Polygon(corners, edgecolor=edgecolor, lw=0.3, facecolor=color)  # facecolor=color)
+            tile = patches.Polygon(corners, edgecolor=edge_color_cfg, lw=edge_lw, facecolor=color)
             axes.add_patch(tile)
 
         if background is not None:

@@ -25,6 +25,12 @@ class MosaicColoring:
         self.coloring_method = config_parameters.get("coloring_method", None)
         self.num_colors = config_parameters.get("num_colors", None)
         self.colormap_path = config_parameters.get("colormap_path", None)
+        # How to sample image colour for each tile.
+        # - polygon_mean (default): mean over pixels actually inside the polygon
+        # - center: single pixel at the polygon's representative point
+        # - bbox_mean: legacy axis-aligned bounding-box mean (includes pixels
+        #   outside the tile and is what this fork did before)
+        self.coloring_sample = config_parameters.get("coloring_sample", "polygon_mean")
 
     def kmeans_colors(self, input_image: np.array, num_colors: int = 6):
         """Estimates the kmeans model for the principal colors of an image
@@ -106,26 +112,41 @@ class MosaicColoring:
             _description_
         """
         colors = []
-        logger.info("Applying colors to mosaic")
+        height, width = image.shape[:2]
+        sample = self.coloring_sample
+        logger.info("Applying colors to mosaic (sample=%s)", sample)
         for polygon in tqdm(polygons):
-
             x_cord, y_cord = polygon.exterior.xy
-            x_list, y_list = draw.polygon(x_cord, y_cord)
-            if len(x_list) > 1 and len(y_list) > 1:
-                img_cut = image[min(y_list) : max(y_list) + 1, min(x_list) : max(x_list) + 1, :]
-                # https://stackoverflow.com/questions/43111029/how-to-find-the-average-colour-of-an-image-in-python-with-opencv
-                average = img_cut.mean(axis=0).mean(axis=0)
-                color = average / 255
-            else:
-                if x_cord[0] >= image.shape[1]:
-                    x_cord[0] = image.shape[1] - 1
-                if y_cord[0] >= image.shape[0]:
-                    y_cord[0] = image.shape[0] - 1
-                color = image[int(y_cord[0]), int(x_cord[0]), :] / 255
+            # skimage.draw.polygon expects (rows, cols) i.e. (y, x).
+            rr, cc = draw.polygon(np.asarray(y_cord), np.asarray(x_cord), shape=(height, width))
+
+            if sample == "center":
+                try:
+                    cx, cy = polygon.representative_point().coords[0]
+                except Exception:  # pylint: disable=broad-except
+                    cx, cy = float(np.mean(x_cord)), float(np.mean(y_cord))
+                cy_i = int(np.clip(round(cy), 0, height - 1))
+                cx_i = int(np.clip(round(cx), 0, width - 1))
+                color = image[cy_i, cx_i, :3] / 255.0
+            elif len(rr) == 0:
+                # Polygon is sub-pixel: fall back to a centroid sample.
+                try:
+                    cx, cy = polygon.representative_point().coords[0]
+                except Exception:  # pylint: disable=broad-except
+                    cx, cy = float(np.mean(x_cord)), float(np.mean(y_cord))
+                cy_i = int(np.clip(round(cy), 0, height - 1))
+                cx_i = int(np.clip(round(cx), 0, width - 1))
+                color = image[cy_i, cx_i, :3] / 255.0
+            elif sample == "bbox_mean":
+                img_cut = image[rr.min() : rr.max() + 1, cc.min() : cc.max() + 1, :3]
+                color = img_cut.mean(axis=(0, 1)) / 255.0
+            else:  # polygon_mean (default, article-style: mean over interior)
+                color = image[rr, cc, :3].mean(axis=0) / 255.0
+
             if color_collection is not None:
                 color = self.get_closest_color(color, color_collection)
 
-            colors += [color]
+            colors.append(color)
 
         return colors
 

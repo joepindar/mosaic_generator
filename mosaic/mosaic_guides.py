@@ -154,14 +154,33 @@ class MosaicGuides:
         img_chains_2 = closing(img_chains, disk(2))
         distance_to_tile = morphology.distance_transform_edt(img_chains_2 == 0).astype(int)
 
-        # chain_spacing = int(round(self.half_tile * self.chain_spacing))
-        # if chain_spacing <= 1:
-        #     chain_spacing = 2
-        # mask = (distance_to_tile == 1) | ((distance_to_tile % chain_spacing == 0) & (distance_to_tile > 0))
+        # Default / supported modes: distance_stripes (article-style). skeleton is opt-in (legacy).
+        method = self.config_params.get("gap_guideline_method", "distance_stripes")
+        if method not in ("skeleton", "distance_stripes"):
+            logger.warning("Unknown gap_guideline_method=%r; using distance_stripes", method)
+            method = "distance_stripes"
 
-        # guidelines2 = np.zeros((self.height, self.width), dtype=np.uint8)
-        # guidelines2[mask] = 1
-        guidelines2 = skeletonize(1 - img_chains_2)
+        if method == "skeleton":
+            # Legacy: medial axis of free space — often visually busier than the paper's approach.
+            logger.info("Gap guidelines: skeleton (legacy medial-axis paths)")
+            guidelines2 = skeletonize(1 - img_chains_2)
+        else:
+            # As in Beetz / Di Blasi-style gap filling: offset contours parallel to existing tiles using
+            # the distance transform (see https://towardsdatascience.com/how-to-generate-roman-style-mosaics-with-python-11d5aa021b09/).
+            spacing_factor = float(self.config_params.get("gap_chain_spacing_factor", self.chain_spacing))
+            chain_spacing = int(round(self.half_tile * spacing_factor))
+            if chain_spacing <= 1:
+                chain_spacing = 2
+            dt = distance_to_tile
+            mask = (dt == 1) | ((dt % chain_spacing == 0) & (dt > 0))
+            logger.info(
+                "Gap guidelines: distance_stripes (chain_spacing=%d px from half_tile=%d × factor=%s)",
+                chain_spacing,
+                self.half_tile,
+                spacing_factor,
+            )
+            guidelines2 = np.zeros((self.height, self.width), dtype=np.uint8)
+            guidelines2[mask] = 1
 
         chains = self._get_list_of_guidelines(guidelines2)
         angles = self._get_guideline_angles(distance_to_tile)

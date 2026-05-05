@@ -47,9 +47,16 @@ class MosaicGenerator:
         List[int]
             New list of polygons with filled gaps
         """
+        # `square` matches the TDS article / yobeatz upstream: axis-aligned
+        # squares dropped along distance-based gap guidelines, then clipped
+        # against existing tiles. `rotated` is the legacy curve-following path.
+        gap_method = self.config_params.get("gap_tile_placement", "square")
         while iter_num != 0:
             gap_guides, gap_angles = self.mosaic_guides.get_gaps_from_polygons(tiles)
-            tiles = self.mosaic_tiles.place_tiles_along_guides(gap_guides, gap_angles, polygons=tiles)
+            if gap_method == "square":
+                tiles = self.mosaic_tiles.place_squares_into_gaps(gap_guides, polygons=tiles)
+            else:
+                tiles = self.mosaic_tiles.place_tiles_along_guides(gap_guides, gap_angles, polygons=tiles)
             iter_num -= 1
 
         post_proc_mosaic = self.mosaic_tiles.postprocess_polygons(tiles)
@@ -69,7 +76,8 @@ class MosaicGenerator:
         logger.info("Saving mosaic to %s", output_path)
         dest_dir = os.path.dirname(output_path)
         os.makedirs(dest_dir, exist_ok=True)
-        mosaic_figure.savefig(output_path, dpi=96, format="png")
+        dpi = self.config_params.get("output_dpi", 96)
+        mosaic_figure.savefig(output_path, dpi=dpi, format="png")
 
     def generate_mosaic(self):
         """Generates a mosaic based on pre-initialized parameters"""

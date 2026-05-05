@@ -1,5 +1,5 @@
-image_path: data/donkey_original.jpg # string with absolute or relative path to the image
-output_folder: data/ # string with absolute or relative path to the output folder
+image_path: image.jpg # relative or absolute path; typical override on CLI, e.g. image_path=my_photo.png
+output_folder: outputs # Hydra run / multirun directories are created under here (see hydra.run.dir / hydra.sweep.dir)
 edge_extraction_method: HED # string with any of the options: HED (deep learning method), diblasi or sobel
 tile_size: 10 # int defining the tile size in pixels
 coloring_method: original # str with any of the options: original (more colors), kmeans
@@ -10,6 +10,21 @@ mosaic_width: 10 # Size in cm of the desired mosaic
 interactive_edge_modification: False # If set to true it opens an interactive window to modify the edges
 save_intermediate_steps: False # Defines if to save the intermediate steps (extracted edges, mosaic guides)
 edges_path : null # You can load extracted edges if they were saved, give the path to the image with the edges
+
+# Gap-fill raster (after the first edge-guided tile pass). Default matches the TDS-style pipeline.
+gap_guideline_method: distance_stripes # distance_stripes | skeleton — use skeleton only if you explicitly opt into legacy medial-axis gap paths
+gap_chain_spacing_factor: 0.5
+# How tiles are placed along the gap guidelines once they exist.
+# square (default): axis-aligned squares of side 2*half_tile, clipped against
+# neighbours — matches the TDS article / yobeatz upstream.
+# rotated: legacy curve-following placement (same path as the rim pass).
+gap_tile_placement: square
+gap_tile_step_factor: 2.0
+# Per-tile colour sampling.
+# polygon_mean (default, article-style): mean over pixels truly inside the polygon
+# center: single representative pixel (faster, blockier)
+# bbox_mean: legacy axis-aligned bounding-box mean (includes pixels outside the tile)
+coloring_sample: polygon_mean
 
 hydra:
   run:
