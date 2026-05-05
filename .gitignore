@@ -45,7 +45,9 @@ dmypy.json
 *.jpg
 *.npy
 *.caffemodel
+!edges/hed_pretrained_bsds.caffemodel
 *.prototxt
+!edges/deploy.prototxt
 *.yaml
 !data/configs/*.yaml
 
